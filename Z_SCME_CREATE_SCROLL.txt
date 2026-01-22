@@ -1,0 +1,1110 @@
+FUNCTION z_scme_create_scroll.
+*"----------------------------------------------------------------------
+*"*"Local Interface:
+*"  IMPORTING
+*"     VALUE(IM_TRBL_DET) TYPE  ZSCME_SS_SCROLL OPTIONAL
+*"     VALUE(I_ROAD) TYPE  CHAR1 OPTIONAL
+*"     VALUE(I_MARIN) TYPE  CHAR1 OPTIONAL
+*"     VALUE(I_AIR) TYPE  CHAR1 OPTIONAL
+*"     VALUE(I_RAIL) TYPE  CHAR1 OPTIONAL
+*"     VALUE(I_IMPORT) TYPE  CHAR1 OPTIONAL
+*"     VALUE(I_EXPORT) TYPE  CHAR1 OPTIONAL
+*"     VALUE(I_REXPORT) TYPE  CHAR1 OPTIONAL
+*"     VALUE(I_DOKNR) TYPE  ZEAM_DOKNR OPTIONAL
+*"     VALUE(IT_DOKNR) TYPE  ZEAM_DOKNR_TT OPTIONAL
+*"     VALUE(I_FLAG) TYPE  CHAR1 OPTIONAL
+*"     VALUE(I_ODATACALL) TYPE  FLAG OPTIONAL
+*"     VALUE(I_GTA_BILLING) TYPE  ZGTA_BILLING OPTIONAL
+*"  EXPORTING
+*"     VALUE(ET_TRBL_SCRL) TYPE  ZSCME_TT_SCROLL
+*"     VALUE(ET_RETURN) TYPE  BAPIRET2_T
+*"  EXCEPTIONS
+*"      NO_SERVICE_PO
+*"      NO_SERVICE_PO_ITEM
+*"      NO_SERVICE_PO_ITEM_LIMITS
+*"      DUPLICATE_INVOICE
+*"      NO_USAGE
+*"      NO_APLOC
+*"      NO_GST_PLANT
+*"      NO_MOVT_DIR
+*"----------------------------------------------------------------------
+
+  TYPES : BEGIN OF lty_stlmntvr,
+            name    TYPE rvari_vnam,
+            shtyp   TYPE shtyp,
+            shtype  TYPE oig_tdstyp,
+            tplst   TYPE tplst,
+            remarks TYPE char70,
+            mfrgr   TYPE zzmfrgr,
+            splant  TYPE zserv_plant,
+          END OF lty_stlmntvr,
+
+          BEGIN OF lty_exec_var,     """" Added by sagar on 20-03-2023
+          name TYPE rvari_vnam,
+          remarks TYPE textr,
+          END OF lty_exec_var.
+
+
+  "vankudoth rajkumar(soc)
+  TYPES: BEGIN OF lty_qwik_pgdt_w,
+          business_id TYPE zscm_qwik_pgdt-business_id,
+          subusiness_id TYPE zscm_qwik_pgdt-subusiness_id,
+          mfrgr TYPE zscm_qwik_pgdt-mfrgr,
+          seqno TYPE zscm_qwik_pgdt-seqno,
+          ekorg TYPE zscm_qwik_pgdt-ekorg,
+          ekgrp TYPE zscm_qwik_pgdt-ekgrp,
+          werks TYPE zscm_qwik_pgdt-werks,
+          gta_billing TYPE zscm_qwik_pgdt-gta_billing,
+        END OF lty_qwik_pgdt_w.
+
+  DATA: lv_ekorg TYPE ekorg,
+        lv_ekgrp TYPE ekgrp,
+        lv_werks TYPE werks_d.
+  "vankudoth rajkumar(eoc)
+
+  DATA : lt_stlmntvr TYPE TABLE OF lty_stlmntvr,
+         lw_stlmntvr TYPE lty_stlmntvr.
+
+  DATA :  lw_bupla  TYPE j_1bbranc_,
+          lw_po_lim TYPE actvalue,
+          lw_digind TYPE char1.
+
+  DATA : lw_drat    TYPE drat,
+         lw_drad    TYPE drad,
+         lw_param   TYPE zparam_fi,
+         lw_openscr TYPE sy-datum,
+         im_obj_key TYPE  objky,
+         e_gst_usg  TYPE char2,
+         lt_drad    TYPE TABLE OF  drad_n.
+
+  DATA : lr_remarks TYPE RANGE OF char20,
+         lw_remarks LIKE LINE OF lr_remarks,
+         lt_att TYPE STANDARD TABLE OF zscme_disp_att_s,
+         lw_dest TYPE rfcdest,
+         lw_title TYPE  char40,
+         lw_objectkey	TYPE objky,
+         lw_doknr TYPE  zeam_doknr.
+
+  DATA : lt_qwik_pgdt TYPE TABLE OF zscm_qwik_pgdt,
+         lw_qwik_pgdt TYPE zscm_qwik_pgdt.
+
+  DATA : lt_cond_type    TYPE TABLE OF zscm_kschl_s,
+         lw_cond_type    TYPE zscm_kschl_s,
+         lt_field_val    TYPE TABLE OF zscm_ded_colm_map_s,
+         lw_field_val    TYPE zscm_ded_colm_map_s,
+         lt_ded_cond_rec TYPE TABLE OF zscm_condition_records,
+         lw_ded_cond_rec TYPE zscm_condition_records,
+         lw_exec_var TYPE lty_exec_var.        """" Added by sagar on 20-03-2023
+
+
+  DATA: lt_return TYPE bapiret2_t,
+        lw_flag TYPE char1,
+        lw_return TYPE bapiret2,
+        lw_objkey TYPE balnrext.
+
+  CONSTANTS : lc_tpp_map   TYPE rvari_vnam VALUE 'ZSCM_QWIK_CROSSERVER_TPP_MAP',
+              lc_shtyp_map TYPE rvari_vnam VALUE 'ZSCM_QWIK_CROSSERVER_SHTYP_MAP',
+              lc_plant_map TYPE rvari_vnam VALUE 'ZSCM_QWIK_CROSSERVER_PLANT_MAP',
+              lc_name_dms  TYPE rvari_vnam VALUE 'ZSCM_QWIK_CROSSSERVEER_DMS_RFC',
+              lc_croser_saccode  TYPE rvari_vnam VALUE 'ZSCM_QWIK_CROSSERVER_SACCODE',
+              lc_consign_cat     TYPE rvari_vnam VALUE 'SCM_CONSIGNMENT_CATEG',
+              lc_object          TYPE balobj_d   VALUE 'ZSCE',
+              lc_subobject       TYPE balsubobj  VALUE 'ZDIGIND',
+              lc_gstusage_skip   TYPE rvari_vnam VALUE 'ZSCM_GSTUSAGE_SKIP'. """" Added by sagar on 20-03-2023
+
+
+  CLEAR e_gst_usg.
+
+  SELECT SINGLE remarks
+    FROM zlog_stlmntvr CLIENT SPECIFIED
+    INTO lw_dest
+    WHERE mandt = sy-mandt
+      AND name = lc_name_dms
+      AND kschl = i_flag
+      AND active = abap_true.
+  IF sy-subrc <> 0.
+    CLEAR lw_dest.
+  ENDIF.
+
+  SELECT SINGLE param1 param2 param3 param4 value1 active_flag
+    FROM zparam_fi
+    INTO lw_param
+    WHERE  param1 = 'OPEN_SOURCE_DMS' AND
+           param2 = 'DMS_DISPLAY' AND
+           param3 =  ' ' AND
+           active_flag = 'X'.
+  IF sy-subrc <> 0.
+    CLEAR lw_param.
+  ENDIF.
+
+  "BOC by  Eswara on 28.08.2020 19:16:03
+  DATA : lw_saccode TYPE char70.
+  SELECT SINGLE remarks
+     FROM  zlog_stlmntvr CLIENT SPECIFIED
+     INTO lw_saccode
+     WHERE mandt = sy-mandt
+     AND name =  lc_croser_saccode
+     AND active = abap_true.
+  IF sy-subrc <> 0.
+    CLEAR:lw_remarks.
+  ENDIF.
+  "BOC  by Eswara on 28.08.2020 19:16:03
+
+  "BOC by  sagar on 20.03.2023
+  SELECT SINGLE name remarks
+     FROM zlog_exec_var INTO lw_exec_var
+     WHERE name = lc_gstusage_skip
+     AND active = abap_true
+     AND remarks = im_trbl_det-business_id.
+  IF sy-subrc <> 0.
+    CLEAR lw_exec_var.
+  ENDIF.
+  "EOC by  sagar on 20.03.2023
+
+
+  IF im_trbl_det IS NOT INITIAL.
+    gw_trbl_det = im_trbl_det.
+
+    "Start - Logic for Cross Server Ses Mapping
+    lw_remarks-sign   = 'I'.
+    lw_remarks-option = 'EQ'.
+
+    IF gw_trbl_det-tplst IS NOT INITIAL.
+      lw_remarks-low = gw_trbl_det-tplst.
+      APPEND lw_remarks TO lr_remarks.
+    ENDIF.
+
+    CLEAR lw_remarks-low.
+    IF gw_trbl_det-shtyp IS NOT INITIAL.
+      lw_remarks-low = gw_trbl_det-shtyp.
+      APPEND lw_remarks TO lr_remarks.
+    ENDIF.
+
+    CLEAR lw_remarks-low.
+    IF gw_trbl_det-splant IS NOT INITIAL.
+      lw_remarks-low = gw_trbl_det-splant.
+      APPEND lw_remarks TO lr_remarks.
+    ENDIF.
+    CLEAR lw_remarks.
+
+    SELECT SINGLE gst_usg
+      FROM zlog_stlmntvr
+      INTO e_gst_usg
+      WHERE name    = 'ZSCE_GST_VENDOR_RD'
+      AND   remarks   = gw_trbl_det-shtyp
+      AND   active  = abap_true
+      AND   lifnr   = gw_trbl_det-lifnr.
+    IF sy-subrc IS INITIAL.
+      e_gst_usg = abap_true.
+    ENDIF.
+
+    SELECT name shtyp shtype tplst remarks mfrgr splant
+      FROM zlog_stlmntvr CLIENT SPECIFIED
+      INTO TABLE lt_stlmntvr
+      WHERE mandt   = sy-mandt
+        AND name    IN (lc_tpp_map, lc_shtyp_map, lc_plant_map, lc_consign_cat)
+        AND active  = abap_true.
+*        AND remarks IN lr_remarks. "gw_trbl_det-tplst.
+    IF sy-subrc = 0.
+      SORT lt_stlmntvr BY name remarks.
+
+      "Replace TPP
+      READ TABLE lt_stlmntvr INTO lw_stlmntvr WITH KEY name = lc_tpp_map remarks = gw_trbl_det-tplst BINARY SEARCH.
+      IF sy-subrc = 0.
+        gw_trbl_det-tplst = lw_stlmntvr-tplst.
+      ENDIF.
+
+      "Replace Shipment Type
+      READ TABLE lt_stlmntvr INTO lw_stlmntvr WITH KEY name = lc_shtyp_map remarks = gw_trbl_det-shtyp BINARY SEARCH.
+      IF sy-subrc = 0.
+        IF lw_stlmntvr-shtyp IS NOT INITIAL.
+          gw_trbl_det-shtyp = lw_stlmntvr-shtyp.
+        ELSE.
+          gw_trbl_det-shtyp = lw_stlmntvr-shtype.
+        ENDIF.
+      ENDIF.
+
+*      gw_trbl_det-werks  = gw_trbl_det-splant.
+      "Replace Plant
+      CLEAR lw_stlmntvr.
+      READ TABLE lt_stlmntvr INTO lw_stlmntvr WITH KEY name = lc_plant_map remarks = gw_trbl_det-splant BINARY SEARCH.
+      IF sy-subrc = 0.
+        gw_trbl_det-splant = lw_stlmntvr-splant.
+        gw_trbl_det-werks  = lw_stlmntvr-mfrgr.
+      ENDIF.
+    ENDIF.
+    "End - Logic for Cross Server Ses Mapping
+
+    "logic to determine Company Code
+    IF gw_trbl_det-tplst IS NOT INITIAL.
+      CALL METHOD zcl_fcpl_bukrs=>fcpl_bukrs
+        EXPORTING
+          im_tplst = gw_trbl_det-tplst
+        IMPORTING
+          ex_bukrs = gw_trbl_det-bukrs.
+    ENDIF.
+    IF gw_trbl_det-bukrs IS INITIAL.
+      gw_return-type = gc_e.
+      gw_return-message = 'Company code not Found'(001).
+      APPEND gw_return TO et_return.
+      RETURN.
+    ENDIF.
+
+    "( BOC - by NUM_005 for Cd-8048512 Tr-RD2K9A31LU on 12.09.2020
+    IF i_road = 'X'.
+      gw_trbl_det-transport_mode = 'RD'.
+    ELSEIF i_rail = 'X'.
+      gw_trbl_det-transport_mode = 'RL'.
+    ELSEIF i_air = 'X'.
+      gw_trbl_det-transport_mode = 'AR'.
+    ELSEIF i_marin = 'X'.
+      gw_trbl_det-transport_mode = 'MR'.
+    ENDIF.
+
+    "vankudoth rajkumar/shubham/arya(eoc)-8075437
+    IF ( im_trbl_det-business_id IS NOT INITIAL AND im_trbl_det-subusiness_id IS NOT INITIAL AND i_gta_billing IS NOT INITIAL ).
+      CLEAR : lv_ekorg,lv_ekgrp,lv_werks.
+      SELECT  ekorg
+              ekgrp
+              werks
+              FROM zscm_qwik_pgdt CLIENT SPECIFIED
+              INTO (lv_ekorg, lv_ekgrp, lv_werks) UP TO 1 ROWS
+              WHERE mandt = sy-mandt
+              AND business_id = im_trbl_det-business_id
+              AND subusiness_id = im_trbl_det-subusiness_id
+              AND gta_billing = i_gta_billing.
+      ENDSELECT.
+      IF sy-subrc = 0.
+        gw_trbl_det-ekorg = lv_ekorg.
+        gw_trbl_det-ekgrp = lv_ekgrp.
+        gw_trbl_det-werks = lv_werks.
+      ELSE.
+        CLEAR: lv_ekorg, lv_ekgrp, lv_werks.
+      ENDIF.
+    ELSE.
+      "vankudoth rajkumar/shubham/arya(eoc)-8075437
+
+      IF im_trbl_det-business_id IS NOT INITIAL AND im_trbl_det-subusiness_id IS NOT INITIAL.
+        SELECT *
+          FROM zscm_qwik_pgdt CLIENT SPECIFIED
+          INTO TABLE lt_qwik_pgdt
+          WHERE mandt         = sy-mandt
+            AND business_id   = im_trbl_det-business_id
+            AND subusiness_id = im_trbl_det-subusiness_id
+            AND mfrgr         = im_trbl_det-mfrgr.
+        IF sy-subrc = 0.
+          DELETE lt_qwik_pgdt WHERE transplpt            NE im_trbl_det-tplst.
+          DELETE lt_qwik_pgdt WHERE shtyp                NE im_trbl_det-shtyp.
+          DELETE lt_qwik_pgdt WHERE subformat_code       NE im_trbl_det-subformat_code.
+          DELETE lt_qwik_pgdt WHERE consignment_category NE im_trbl_det-consignment_category.
+          DELETE lt_qwik_pgdt WHERE transport_mode       NE gw_trbl_det-transport_mode.
+          SORT lt_qwik_pgdt BY business_id subusiness_id.
+        ENDIF.
+        READ TABLE lt_qwik_pgdt INTO lw_qwik_pgdt INDEX 1.
+        IF sy-subrc = 0.
+          gw_trbl_det-ekgrp = lw_qwik_pgdt-ekgrp.
+          gw_trbl_det-ekorg = lw_qwik_pgdt-ekorg.
+          gw_trbl_det-werks = lw_qwik_pgdt-werks.       "vankudoth rajkumar - cd:8075862 tr:RD2K9A4PKP.
+        ENDIF.
+      ENDIF.
+    ENDIF.
+    " EOC - by NUM_005 for Cd-8048512 Tr-RD2K9A31LU on 12.09.2020 )
+
+    "1.	Get a valid / released Service PO for a given vendor
+    IF ( gw_trbl_det-ekgrp IS INITIAL AND gw_trbl_det-ekorg IS INITIAL )
+     AND ( gw_trbl_det-shtyp IS NOT INITIAL AND gw_trbl_det-tplst IS NOT INITIAL ).
+      CALL METHOD zcl_scme_scroll_create_valid=>get_service_po
+        EXPORTING
+          im_scroll_details = gw_trbl_det
+        IMPORTING
+          et_service_po     = gw_service_po
+          ev_ekorg          = gw_ekorg
+          ev_ekgrp          = gw_ekgrp
+          et_return         = et_return.
+
+      IF et_return IS NOT INITIAL OR gw_service_po IS INITIAL.
+        IF i_odatacall = abap_true.
+          gw_return-type    = gc_e.
+          gw_return-message = 'Service PO Not found'(011).
+          APPEND gw_return TO et_return.
+          RETURN.
+        ELSE.
+          RAISE no_service_po.
+        ENDIF.
+      ELSE.
+        gw_trbl_det-ekorg      = gw_ekorg.
+        gw_trbl_det-ekgrp      = gw_ekgrp.
+        gw_trbl_det-ebeln      = gw_service_po-ebeln.
+      ENDIF.
+    ELSEIF gw_trbl_det-ekgrp IS NOT INITIAL AND gw_trbl_det-ekorg IS NOT INITIAL.
+      CALL METHOD zcl_scme_scroll_create_valid=>get_service_po
+        EXPORTING
+          im_scroll_details = gw_trbl_det
+        IMPORTING
+          et_service_po     = gw_service_po
+          ev_ekorg          = gw_ekorg
+          ev_ekgrp          = gw_ekgrp
+          et_return         = et_return.
+      IF et_return IS NOT INITIAL OR gw_service_po IS INITIAL.
+        IF i_odatacall = abap_true.
+          gw_return-type    = gc_e.
+          gw_return-message = 'Service PO Not found'(011).
+          APPEND gw_return TO et_return.
+          RETURN.
+        ELSE.
+          RAISE no_service_po.
+        ENDIF.
+      ELSE.
+        gw_trbl_det-ebeln      = gw_service_po-ebeln.
+      ENDIF.
+    ENDIF.
+
+    gw_trbl_det-werks = im_trbl_det-werks.    "Vankudoth Rajkumar
+    gw_trbl_det-scroll_amt = gw_trbl_det-tr_bill_amt.
+
+    "Logic for Terms of Payment Key -gw_zterm
+    SELECT SINGLE zterm zzgst_usg
+      FROM ekko CLIENT SPECIFIED
+      INTO (gw_zterm, gw_gstusg)
+      WHERE mandt = sy-mandt
+       AND  ebeln = gw_service_po-ebeln.
+    IF sy-subrc = 0 AND gw_zterm IS NOT INITIAL.
+      SELECT ztag1
+        FROM t052 CLIENT SPECIFIED
+        INTO gw_ztag1 UP TO 1 ROWS
+        WHERE mandt = sy-mandt
+          AND zterm = gw_zterm.
+      ENDSELECT.
+      IF sy-subrc <> 0.
+        CLEAR : gw_ztag1.
+      ENDIF.
+    ENDIF.
+
+    IF lw_exec_var-remarks IS INITIAL .     """" IF added by sagar
+      "5.	Check Usage in Service PO
+      IF gw_trbl_det-zzgst_usg IS INITIAL.
+        IF gw_gstusg IS INITIAL.
+          IF i_odatacall = abap_true.
+            gw_return-type    = gc_e.
+            gw_return-message = 'Usage not found'(010).
+            APPEND gw_return TO et_return.
+            RETURN.
+          ELSE.
+            RAISE no_usage.
+          ENDIF.
+        ENDIF.
+        gw_trbl_det-zzgst_usg = gw_gstusg.
+      ENDIF.
+    ENDIF.
+
+    gw_trbl_det-ztagg     = gw_ztag1.
+
+    "2.	Get a valid Service PO item for respective posing date (LR date and settlement date)
+    CALL METHOD zcl_scme_scroll_create_valid=>get_service_po_item
+      EXPORTING
+        im_scroll_details   = gw_trbl_det
+      IMPORTING
+        et_service_po_items = gt_po_items
+        et_return           = et_return.
+    IF et_return IS NOT INITIAL.
+      IF i_odatacall = abap_true.
+        gw_return-type    = gc_e.
+        gw_return-message = 'Service PO Item Not Found'(009).
+        APPEND gw_return TO et_return.
+        RETURN.
+      ELSE.
+        RAISE no_service_po_item.
+      ENDIF.
+    ENDIF.
+
+    "3.	Find PO limits exists for given invoice amount
+*    IF gt_po_items IS NOT INITIAL.
+*      CLEAR : lw_po_lim, gw_commitment, gw_actvalue.
+*      READ TABLE gt_po_items INTO gw_po_items INDEX 1.
+*      IF sy-subrc = 0.
+*        CALL FUNCTION 'Z_SCME_PO_LIMITS'
+*          EXPORTING
+*            im_ebeln           = gw_po_items-ebeln
+*            im_ebelp           = gw_po_items-ebelp
+*          IMPORTING
+*            ex_commitment      = gw_commitment
+*            ex_actvalue        = gw_actvalue
+*          EXCEPTIONS
+*            no_po_limits_found = 1
+*            OTHERS             = 2.
+*        IF sy-subrc = 0.
+*          lw_po_lim = gw_commitment - gw_actvalue.  "PO Limit value
+*          IF gw_trbl_det-tr_bill_amt > lw_po_lim.
+*            RAISE no_service_po_item_limits.
+*          ENDIF.
+*        ENDIF.
+*      ENDIF.
+*    ENDIF.
+
+    "4.	Check duplicate vendor invoice number for corresponding fiscal year
+    CALL METHOD zcl_scme_scroll_create_valid=>check_duplicate_vend
+      EXPORTING
+        im_scroll_details = gw_trbl_det
+      IMPORTING
+        et_return         = et_return.
+    IF et_return IS NOT INITIAL.
+      IF i_odatacall = abap_true.
+        gw_return-type    = gc_e.
+        gw_return-message = 'Duplicate Invoice Found'(008).
+        APPEND gw_return TO et_return.
+        RETURN.
+      ELSE.
+        RAISE duplicate_invoice.
+      ENDIF.
+    ENDIF.
+
+    "6.	Check and get AP Location
+    CALL METHOD zcl_scme_scroll_create_valid=>get_ap_loc
+      EXPORTING
+        im_scroll_details = gw_trbl_det
+        im_import         = i_import
+        im_export         = i_export
+        im_rexport        = i_rexport
+      IMPORTING
+        et_aploc          = gt_aploc
+        et_return         = et_return.
+    IF et_return IS NOT INITIAL.
+      IF i_odatacall = abap_true.
+        gw_return-type    = gc_e.
+        gw_return-message = 'AP Location not found'(007).
+        APPEND gw_return TO et_return.
+        RETURN.
+      ELSE.
+        RAISE no_aploc.
+      ENDIF.
+    ENDIF.
+
+    "7.	Validate GST Plant
+    IF gw_trbl_det-werks IS INITIAL.
+      IF i_odatacall = abap_true.
+        gw_return-type    = gc_e.
+        gw_return-message = 'GST Plant validation failed'(006).
+        APPEND gw_return TO et_return.
+        RETURN.
+      ELSE.
+        RAISE no_gst_plant.
+      ENDIF.
+    ENDIF.
+
+    "8.	Validate digital signature invoice attached for given invoice number
+    "Logic to fetch Business area
+    IF gw_trbl_det-werks IS NOT INITIAL.
+      SELECT SINGLE j_1bbranch
+         FROM t001w
+         INTO lw_bupla
+         WHERE werks = gw_trbl_det-werks.
+      IF sy-subrc NE 0.
+        CLEAR lw_bupla.
+      ENDIF.
+    ENDIF.
+    gw_trbl_det-bupla = lw_bupla.
+
+    "9. Check movement direction
+    IF gw_trbl_det-movt_dir IS INITIAL.
+      IF i_odatacall = abap_true.
+        gw_return-type    = gc_e.
+        gw_return-message = 'Movement Direction Not Found'(005).
+        APPEND gw_return TO et_return.
+        RETURN.
+      ELSE.
+        RAISE no_movt_dir.
+      ENDIF.
+    ENDIF.
+
+    APPEND gw_trbl_det TO et_trbl_scrl.
+  ENDIF.
+
+  "Process final data for scroll creation
+  REFRESH : gt_yinvlink, gt_yinvhead_ext.
+  SORT  et_trbl_scrl BY tr_billno lifnr.
+  SORT  gt_aploc     BY type stype ekgrp werks.
+  LOOP AT et_trbl_scrl ASSIGNING <gfs_scrl>.
+    gw_yinvhead_i-bukrs   =  <gfs_scrl>-bukrs.
+    gw_yinvhead_i-syear   =  sy-datum+0(4).
+    gw_yinvhead_i-xblnr   =  <gfs_scrl>-tr_billno.
+    gw_yinvhead_i-bldat   =  <gfs_scrl>-tr_bill_dt.
+    gw_yinvhead_i-lifnr   =  <gfs_scrl>-lifnr.
+    gw_yinvhead_i-scrdate =  sy-datum.
+    gw_yinvhead_i-gst_usg =  gw_gstusg.
+    gw_yinvhead_i-bill_frm  =  <gfs_scrl>-bill_vendor.
+    IF NOT e_gst_usg IS INITIAL.
+      gw_yinvhead_i-logflag = abap_true.
+    ENDIF.
+
+    "BOC - Enhanced AP Location Determination with Dynamic Type/SType
+    DATA: lv_type_marine       TYPE char10,
+          lv_type_config       TYPE textr,
+          lv_stype_marine      TYPE char10,
+          lv_stype_exim_config  TYPE textr,
+          lv_exim_config_found  TYPE abap_bool.
+
+    "Determine Type dynamically from configuration
+    CLEAR: lv_type_config, lv_type_marine.
+    SELECT SINGLE remarks
+      FROM zlog_exec_var CLIENT SPECIFIED
+      INTO lv_type_config
+      WHERE mandt = sy-mandt
+        AND name  = 'ZSCM_APCODETYPE_FETCH'
+        AND active = 'X'.
+
+    IF sy-subrc = 0 AND lv_type_config IS NOT INITIAL.
+      lv_type_marine = lv_type_config.
+    ELSE.
+      "Fallback to existing constant if configuration not found
+      lv_type_marine = gc_ser.
+    ENDIF.
+
+    "Determine SType for Marine scenario or use EXIM configuration
+    IF gw_trbl_det-transport_mode = 'MR' AND
+       ( <gfs_scrl>-movt_dir = 'I' OR <gfs_scrl>-movt_dir = 'O' ).
+      "Marine scenario - Use EXIM configuration
+      CLEAR: lv_stype_exim_config, lv_exim_config_found.
+
+      "Try primary EXIM configuration
+      SELECT SINGLE remarks
+        FROM zlog_exec_var CLIENT SPECIFIED
+        INTO lv_stype_exim_config
+        WHERE mandt = sy-mandt
+          AND name  = 'ZSCM_SERTYPE_EXIM_FETCH'
+          AND active = 'X'.
+
+      IF sy-subrc = 0 AND lv_stype_exim_config IS NOT INITIAL.
+        lv_stype_marine = lv_stype_exim_config.
+        lv_exim_config_found = abap_true.
+      ELSE.
+        "Try fallback QWIK configuration
+        SELECT SINGLE remarks
+          FROM zlog_exec_var CLIENT SPECIFIED
+          INTO lv_stype_exim_config
+          WHERE mandt = sy-mandt
+            AND name  = 'ZSCM_SERTYPE_QWIK_FETCH'
+            AND active = 'X'.
+
+        IF sy-subrc = 0 AND lv_stype_exim_config IS NOT INITIAL.
+          lv_stype_marine = lv_stype_exim_config.
+          lv_exim_config_found = abap_true.
+        ENDIF.
+      ENDIF.
+
+      "If no configuration found, use fallback
+      IF lv_exim_config_found = abap_false.
+        lv_stype_marine = gc_logi.
+      ENDIF.
+    ELSE.
+      "Non-Marine scenario - Use SType based on Import/Export scenario
+      IF i_import = 'X' OR i_export = 'X' OR i_rexport = 'X'.
+        "Get from EXIM configuration
+        CLEAR: lv_stype_exim_config, lv_exim_config_found.
+        SELECT SINGLE remarks
+          FROM zlog_exec_var CLIENT SPECIFIED
+          INTO lv_stype_exim_config
+          WHERE mandt = sy-mandt
+            AND name  = 'ZSCM_SERTYPE_EXIM_FETCH'
+            AND active = 'X'.
+
+        IF sy-subrc = 0 AND lv_stype_exim_config IS NOT INITIAL.
+          lv_stype_marine = lv_stype_exim_config.
+        ELSE.
+          SELECT SINGLE remarks
+            FROM zlog_exec_var CLIENT SPECIFIED
+            INTO lv_stype_exim_config
+            WHERE mandt = sy-mandt
+              AND name  = 'ZSCM_SERTYPE_QWIK_FETCH'
+              AND active = 'X'.
+
+          IF sy-subrc = 0 AND lv_stype_exim_config IS NOT INITIAL.
+            lv_stype_marine = lv_stype_exim_config.
+          ELSE.
+            lv_stype_marine = gc_logi.
+          ENDIF.
+        ENDIF.
+      ELSE.
+        lv_stype_marine = gc_logi.
+      ENDIF.
+    ENDIF.
+
+    "BOC by Ravi M For Cd-8056401 Tr-RD2K9A3HA0 on 20.07.2021
+    READ TABLE lt_stlmntvr INTO lw_stlmntvr WITH KEY name = lc_consign_cat
+                                                     remarks = <gfs_scrl>-consignment_category BINARY SEARCH.
+    IF sy-subrc = 0.
+      READ TABLE gt_aploc INTO gw_aploc WITH KEY type  = lv_type_marine
+                                                 stype = lv_stype_marine
+                                                 ekgrp = gw_ekgrp
+                                                 werks = <gfs_scrl>-werks BINARY SEARCH.
+      IF sy-subrc = 0.
+        gw_yinvhead_i-apcode   =  gw_aploc-apcode.
+        gw_yinvhead_i-scrldept =  gw_aploc-scrldept.
+        <gfs_scrl>-apcode      =  gw_aploc-apcode.
+      ENDIF.
+    ELSE.
+      "EOC by Ravi M For Cd-8056401 Tr-RD2K9A3HA0 on 20.07.2021
+      READ TABLE gt_aploc INTO gw_aploc WITH KEY type  = lv_type_marine
+                                                 stype = lv_stype_marine
+                                                 ekgrp = gw_ekgrp.
+      IF sy-subrc = 0.
+        gw_yinvhead_i-apcode   =  gw_aploc-apcode.
+        gw_yinvhead_i-scrldept =  gw_aploc-scrldept.
+        <gfs_scrl>-apcode      =  gw_aploc-apcode.
+
+      ELSE.   """" SOC by sagar on 20-03-2023
+
+        READ TABLE gt_aploc INTO gw_aploc WITH KEY type  = lv_type_marine
+                                                   stype = lv_stype_marine
+                                                   werks = <gfs_scrl>-werks.
+        IF sy-subrc = 0.
+          gw_yinvhead_i-apcode   =  gw_aploc-apcode.
+          gw_yinvhead_i-scrldept =  gw_aploc-scrldept.
+          <gfs_scrl>-apcode      =  gw_aploc-apcode.
+        ENDIF.                                      """" EOC by sagar on 20-03-2023
+      ENDIF.
+    ENDIF.
+    "EOC - Enhanced AP Location Determination with Dynamic SType
+
+    gw_yinvhead_i-ebeln    =  gw_service_po-ebeln.
+    gw_yinvhead_i-amount   =  <gfs_scrl>-tr_bill_amt.
+    gw_yinvhead_i-waers    =  <gfs_scrl>-tr_bill_curr.
+    gw_yinvhead_i-scrldate =  sy-datum.
+    gw_yinvhead_i-usnam    =  sy-uname.
+    gw_yinvhead_i-cpudt    =  sy-datum.
+    gw_yinvhead_i-cputm    =  sy-uzeit.
+
+    "BOC - Dynamic Scroll Type Determination from ZLOG_EXEC_VAR
+    DATA: lv_scroll_type_config TYPE textr,  "REMARKS field
+          lv_config_found       TYPE abap_bool.
+
+    CLEAR: lv_scroll_type_config, lv_config_found.
+
+    "Query ZLOG_EXEC_VAR for scroll type configuration
+    IF gw_trbl_det-transport_mode IS NOT INITIAL AND
+       <gfs_scrl>-movt_dir IS NOT INITIAL.
+      SELECT SINGLE remarks
+        FROM zlog_exec_var CLIENT SPECIFIED
+        INTO lv_scroll_type_config
+        WHERE mandt   = sy-mandt
+          AND name    = 'ZSCM_SCROLLTYPE_FETCH'
+          AND vsart   = gw_trbl_det-transport_mode
+          AND function = <gfs_scrl>-movt_dir
+          AND active  = 'X'.
+      IF sy-subrc = 0 AND lv_scroll_type_config IS NOT INITIAL.
+        lv_config_found = abap_true.
+      ENDIF.
+    ENDIF.
+
+    "Use configured scroll type if found, otherwise use fallback
+    IF lv_config_found = abap_true.
+      "Use scroll type from configuration
+      gw_yinvhead_i-scrtype  = lv_scroll_type_config.
+      <gfs_scrl>-scroll_type = lv_scroll_type_config.
+    ELSE.
+      "Fallback to existing logic based on movement direction
+      IF <gfs_scrl>-movt_dir = 'I'.      "Inbound Case
+        gw_yinvhead_i-scrtype  = gc_inro.
+        <gfs_scrl>-scroll_type = gc_inro.
+      ELSEIF <gfs_scrl>-movt_dir = 'O'.  "Outbound Case
+        gw_yinvhead_i-scrtype  = gc_obro.
+        <gfs_scrl>-scroll_type = gc_obro.
+      ENDIF.
+    ENDIF.
+    "EOC - Dynamic Scroll Type Determination
+
+    gw_yinvhead_i-currproc =  gc_oo.
+    gw_yinvhead_i-source   =  gc_b.
+    gw_yinvhead_i-pssc     =  gc_p1.
+    "yinvlink
+    gw_yinvlink-werks      =  <gfs_scrl>-werks.
+    gw_yinvlink-saccode    =  <gfs_scrl>-saccode.
+    "BOC by  Eswara on 28.08.2020 19:21:14
+    IF  gw_yinvlink-saccode IS INITIAL.
+      gw_yinvlink-saccode  = lw_saccode .
+    ENDIF.
+    "BOC  by Eswara on 28.08.2020 19:21:14
+    gw_yinvlink-baselinedt =  sy-datum.
+    gw_yinvlink-j_1bbranch =  lw_bupla.
+    APPEND gw_yinvlink TO gt_yinvlink.
+    CLEAR : gw_yinvlink.
+
+    "BOC for Digital indicator by NUM_005
+    IF <gfs_scrl>-digind = 'Y'.
+      lw_digind = 'X'.
+      lw_return-type       = 'S'.
+      lw_return-id         = '00'.
+      lw_return-number     = '001'.
+      lw_return-message    = 'Digital Indicator is found as Y.'.
+      lw_return-message_v1 = 'Digital Indicator flag updated successfully.'.
+      APPEND lw_return TO lt_return.
+      CLEAR lw_return.
+    ELSE.
+      CLEAR lw_digind.
+      lw_return-type       = 'E'.
+      lw_return-id         = '00'.
+      lw_return-number     = '001'.
+      lw_return-message    = 'Digital Indicator is not found as Y.'.
+      lw_return-message_v1 = 'Digital Indicator flag was not updated.'.
+      APPEND lw_return TO lt_return.
+      CLEAR lw_return.
+    ENDIF.
+    "EOC
+
+    "BOC Logs for digital indicator
+    IF lt_return[] IS NOT INITIAL.
+      CONCATENATE 'Account No of Vendor :' im_trbl_det-lifnr ' Transporter Bill Number :' im_trbl_det-tr_billno INTO lw_objkey.
+      CALL FUNCTION 'Z_APPLICATION_LOG_CREATE'
+        EXPORTING
+          i_objectkey = lw_objkey
+          i_object    = lc_object
+          i_subobject = lc_subobject
+          it_return   = lt_return.
+      CLEAR lw_objkey.
+      REFRESH lt_return.
+    ENDIF.
+    "EOC.
+
+    IF gw_yinvhead_i IS NOT INITIAL.
+      " Lock the Bill before scroll creation
+      CALL FUNCTION 'ENQUEUE_EZSCESCROLLLOCK' ##arg_ok
+        EXPORTING
+          mode_zsce_scroll_lock = gc_e        "'E'
+          xblnr                 = gw_yinvhead_i-xblnr
+          ebeln                 = gw_yinvhead_i-ebeln
+          lifnr                 = gw_yinvhead_i-lifnr
+        EXCEPTIONS
+          foreign_lock          = 1 ##arg_ok
+          system_failure        = 2
+          OTHERS                = 3.
+      IF sy-subrc = 0.
+        APPEND gw_yinvhead_i TO gt_yinvhead_i.
+
+        CALL FUNCTION 'Z_BACKGROUND_SCROLL_CREATE'
+          EXPORTING
+            yinvhead                       = gw_yinvhead_i
+*           TESTMODE                       =
+            digiind                        = lw_digind    "gc_x  changes by NUM_005 on 24.04.2020   "'X'   " eswara 21.03.2020
+          IMPORTING
+            eyinvhead                      = gw_yinvhead_e
+          TABLES
+            ilink                          = gt_yinvlink
+            iyinvhead_ext                  = gt_yinvhead_ext
+          EXCEPTIONS
+            lifnr_initial                  = 1
+            xblnr_initial                  = 2
+            bldat_initial                  = 3
+            duplicate_invoice              = 4
+            scn_ebeln_initial              = 5
+            ebeln_not_matching             = 6
+            number_range                   = 7
+            bukrs_initial                  = 8
+            apcode_initial                 = 9
+            apcode_incorrect               = 10
+            scrldept_incorrect             = 11
+            test_mode_successful           = 12
+            scn_and_ebeln_both_not_allowed = 13
+            ebeln_initial                  = 14
+            invoice_date_cannot_be_future  = 15
+            good_supplier                  = 16
+            bill_from                      = 17
+            saccode_gst                    = 18
+            werks                          = 19
+            xblnr_special_chars            = 20
+            OTHERS                         = 21.
+        IF sy-subrc = 0.
+          <gfs_scrl>-scroll_no = gw_yinvhead_e-scrnum.
+          <gfs_scrl>-scroll_yr = gw_yinvhead_e-syear.
+          <gfs_scrl>-scroll_dt = gw_yinvhead_e-scrdate.
+
+     " SOC BY OMKAR MORE ON 14.05.2025 CD:8083303 TR:RD2K9A5789
+          IF <gfs_scrl>-apcode IS INITIAL.
+            <gfs_scrl>-apcode = gw_yinvhead_e-apcode.
+          ENDIF.
+
+          IF <gfs_scrl>-bukrs IS INITIAL.
+            <gfs_scrl>-bukrs = gw_yinvhead_e-bukrs.
+          ENDIF.
+     " EOC BY OMKAR MORE ON 14.05.2025 CD:8083303 TR:RD2K9A5789
+
+          "Application Log
+          CLEAR: lw_return, lt_return.
+          lw_return-id = 'ZFCA'.
+          lw_return-number = '404'.
+          lw_return-type   = 'W'.
+          CONCATENATE  gw_yinvhead_e-scrnum
+                       gw_yinvhead_e-syear
+                       gw_yinvhead_e-scrdate
+                       INTO  lw_objkey SEPARATED BY '/'.
+          CONCATENATE 'scrnum' 'syear' 'scrdate' INTO
+                      lw_return-message SEPARATED BY '/'.
+          APPEND lw_return TO lt_return.
+          CLEAR lw_return-message.
+
+          CLEAR : lw_drad , lt_drad.
+*          IF i_doknr IS NOT INITIAL.
+          IF it_doknr IS NOT INITIAL OR i_doknr IS NOT INITIAL.
+
+            IF i_flag IS NOT INITIAL.                   " for ZLSD ROAD
+
+*              SELECT SINGLE remarks                          "Commented for code review
+*                 FROM zlog_stlmntvr CLIENT SPECIFIED
+*                 INTO lw_dest
+*                 WHERE mandt = sy-mandt
+*                 AND name = lc_name_dms
+*                 AND kschl = i_flag
+*                 AND active = abap_true.
+              IF lw_dest IS NOT INITIAL AND i_flag EQ 'H'.
+                LOOP AT it_doknr INTO lw_doknr.                  "Code review
+                  CLEAR:lt_att.
+                  CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+                    EXPORTING
+                      input  = lw_doknr
+                    IMPORTING
+                      output = lw_doknr.
+
+                  lw_doknr+0(3) = 'ZVI'.
+
+                  CALL FUNCTION 'ZSCME_DISP_ATT' DESTINATION lw_dest
+                    EXPORTING
+*                     I_ATTNUM        =
+                      i_doknr         = lw_doknr
+                    IMPORTING
+                      et_file_details = lt_att
+                      et_return       = lt_return.
+                  IF lt_att IS NOT INITIAL.
+
+                    CLEAR:lw_title,lw_objectkey.
+                    CONCATENATE im_trbl_det-lifnr im_trbl_det-tr_billno im_trbl_det-tr_bill_dt+0(4)
+                       INTO lw_title SEPARATED BY '/'.
+
+                    CONCATENATE gw_yinvhead_e-scrnum gw_yinvhead_e-bukrs gw_yinvhead_e-apcode gw_yinvhead_e-syear
+                                INTO lw_objectkey.
+
+                    CALL FUNCTION 'Z_SCME_CREATE_DMS'
+                      EXPORTING
+                        it_file_details = lt_att
+                        i_title         = lw_title
+                        i_objectkey     = lw_objectkey
+                      IMPORTING
+                        et_return       = lt_return.
+
+                  ENDIF.
+                  CLEAR:lw_doknr.
+                ENDLOOP.
+
+                CALL FUNCTION 'Z_FCA_APPLICATION_LOG'
+                  EXPORTING
+                    objectkey = lw_objkey
+                    object    = 'ZFCAAP'
+                    subobject = 'ZSCROLL'
+                    aplog_del = 7
+                  TABLES
+                    im_return = lt_return.
+
+                READ TABLE lt_return TRANSPORTING NO FIELDS WITH KEY type = 'E'.
+                IF sy-subrc = 0.
+*                  ROLLBACK WORK.            ""Code review
+                  lw_flag = 'X'.
+                ELSE.
+*                  COMMIT WORK AND WAIT.     ""Code review
+                ENDIF.
+              ELSEIF i_flag EQ 'J' OR i_flag EQ abap_true.
+                IF NOT i_doknr IS INITIAL.
+                  lw_doknr = i_doknr.
+                  CLEAR:lt_att.
+                  CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+                    EXPORTING
+                      input  = lw_doknr
+                    IMPORTING
+                      output = lw_doknr.
+
+                  lw_doknr+0(3) = 'ZVI'.
+
+                  CALL FUNCTION 'ZSCME_DISP_ATT' DESTINATION lw_dest
+                    EXPORTING
+*                     I_ATTNUM        =
+                      i_doknr         = lw_doknr
+                    IMPORTING
+                      et_file_details = lt_att
+                      et_return       = lt_return.
+                  IF lt_att IS NOT INITIAL.
+
+                    CLEAR:lw_title,lw_objectkey.
+                    CONCATENATE im_trbl_det-lifnr im_trbl_det-tr_billno im_trbl_det-tr_bill_dt+0(4)
+                       INTO lw_title SEPARATED BY '/'.
+
+                    CONCATENATE gw_yinvhead_e-scrnum gw_yinvhead_e-bukrs gw_yinvhead_e-apcode gw_yinvhead_e-syear
+                                INTO lw_objectkey.
+
+                    CALL FUNCTION 'Z_SCME_CREATE_DMS'
+                      EXPORTING
+                        it_file_details = lt_att
+                        i_title         = lw_title
+                        i_objectkey     = lw_objectkey
+                      IMPORTING
+                        et_return       = lt_return.
+
+                  ENDIF.
+                  CLEAR:lw_doknr.
+
+                  CALL FUNCTION 'Z_FCA_APPLICATION_LOG'
+                    EXPORTING
+                      objectkey = lw_objkey
+                      object    = 'ZFCAAP'
+                      subobject = 'ZSCROLL'
+                      aplog_del = 7
+                    TABLES
+                      im_return = lt_return.
+
+                  READ TABLE lt_return TRANSPORTING NO FIELDS WITH KEY type = 'E'.
+                  IF sy-subrc = 0.
+*                    ROLLBACK WORK.                 "Code review
+                    lw_flag = 'X'.                  "Code review
+                  ELSE.
+*                    COMMIT WORK AND WAIT.          "Code review
+                  ENDIF.
+
+                ENDIF.
+              ENDIF.
+            ELSE.
+
+*              SELECT SINGLE   param1               "Commented for code review
+*                    param2
+*                    param3
+*                    param4
+*                    value1
+*                    active_flag
+*               FROM zparam_fi
+*               INTO lw_param
+*               WHERE  param1 = 'OPEN_SOURCE_DMS' AND
+*                      param2 = 'DMS_DISPLAY' AND
+*                      param3 =  ' ' AND
+*                      active_flag = 'X'.
+*              IF sy-subrc = 0.
+              IF lw_param IS NOT INITIAL.
+                CONDENSE lw_param-value1.
+                CLEAR lw_openscr.
+                CALL FUNCTION 'CONVERT_DATE_TO_INTERNAL'
+                  EXPORTING
+                    date_external            = lw_param-value1
+*                   ACCEPT_INITIAL_DATE      =
+                  IMPORTING
+                    date_internal            = lw_openscr
+                  EXCEPTIONS
+                    date_external_is_invalid = 1
+                    OTHERS                   = 2.
+              ELSE.
+                CLEAR lw_param.
+              ENDIF.
+              IF sy-datum GT lw_openscr.
+*                LOOP AT it_doknr INTO lw_doknr.
+                CONCATENATE 'DMS Details :'
+                i_doknr INTO
+                lw_return-message SEPARATED BY '/'.
+                APPEND lw_return TO lt_return.
+                CLEAR lw_return-message.
+
+                lw_drad-dokar = i_doknr+0(3).
+                lw_drad-doknr = i_doknr+8(25).
+                lw_drad-dokvr = i_doknr+6(2).
+                lw_drad-doktl = i_doknr+3(3).
+                lw_drad-dokob = 'YINVHEAD'.
+
+                im_obj_key+0(11) =  gw_yinvhead_e-scrnum .
+                im_obj_key+11(4) =  gw_yinvhead_e-bukrs .
+                im_obj_key+15(3) =  gw_yinvhead_e-apcode .
+                im_obj_key+18(4) =  gw_yinvhead_e-syear .
+                lw_drad-objky = im_obj_key.
+                APPEND lw_drad TO lt_drad.
+                CLEAR lw_drad.
+
+                CONCATENATE 'Object  Key:' 'YINVHEAD'
+                       im_obj_key  INTO
+                      lw_return-message SEPARATED BY '/'.
+                APPEND lw_return TO lt_return.
+                CLEAR lw_return-message.
+
+
+                CALL FUNCTION 'DOKUMENTZUORDNUNGEN_BUCHEN'
+                  EXPORTING
+                    ob      = 'YINVHEAD'
+                    objky   = im_obj_key
+                  TABLES
+                    savdrad = lt_drad.
+
+                CALL FUNCTION 'Z_FCA_APPLICATION_LOG'
+                  EXPORTING
+                    objectkey = lw_objkey
+                    object    = 'ZFCAAP'
+                    subobject = 'ZSCROLL'
+                    aplog_del = 7
+                  TABLES
+                    im_return = lt_return.
+                READ TABLE lt_return TRANSPORTING NO FIELDS WITH KEY type = 'E'.
+                IF sy-subrc = 0.
+*                  ROLLBACK WORK.                  "Code review
+                  lw_flag = 'X'.
+                ELSE.
+*                  COMMIT WORK AND WAIT.           "Code review
+                ENDIF.
+              ENDIF.
+            ENDIF.
+          ENDIF.
+
+          IF i_flag IS INITIAL.         "added by Rahul Lal 17/12/20
+            "( BOC by NUM_005 for Cd-8050372 Tr-RD2K9A35JV on 25/11/2020 Fnc-Minal Tike
+            lw_cond_type-kschl = <gfs_scrl>-kschl.
+            APPEND lw_cond_type TO lt_cond_type.
+
+            lw_field_val-chargehead = <gfs_scrl>-kschl.
+            lw_field_val-field      = 'SERVICE AGENT'.
+            lw_field_val-value      = <gfs_scrl>-lifnr.
+            APPEND lw_field_val TO lt_field_val.
+
+            CALL FUNCTION 'Z_SCM_QWIK_DED_RATES_FETCH' DESTINATION lw_dest
+              EXPORTING
+                it_kschl        = lt_cond_type
+                i_period        = gw_yinvhead_e-scrdate
+                it_field_values = lt_field_val
+              IMPORTING
+                et_cond_rec     = lt_ded_cond_rec.
+            IF sy-subrc = 0 AND lt_ded_cond_rec IS NOT INITIAL.
+              READ TABLE lt_ded_cond_rec INTO lw_ded_cond_rec INDEX 1.
+              IF sy-subrc = 0.
+                <gfs_scrl>-kschl = lw_ded_cond_rec-field1.
+                <gfs_scrl>-kbetr = lw_ded_cond_rec-field5.
+              ENDIF.
+            ENDIF.
+            "EOC by NUM_005 for Cd-8050372 Tr-RD2K9A35JV on 25/11/2020 Fnc-Minal Tike )
+          ENDIF.                "added by Rahul Lal 17/12/20
+        ELSE.
+          gw_return-type = gc_e.
+          CONCATENATE 'Scroll is Not Created for Tr Bill No : '(002) <gfs_scrl>-tr_billno
+                 INTO gw_return-message
+                 SEPARATED BY space.
+          APPEND gw_return TO et_return.
+        ENDIF.
+      ENDIF.
+      " Un-Lock the Bill after scroll creation
+      CALL FUNCTION 'DEQUEUE_EZSCESCROLLLOCK' ##arg_ok
+        EXPORTING
+          mode_zsce_scroll_lock = gc_e     "'E'
+          xblnr                 = gw_yinvhead_i-xblnr
+          ebeln                 = gw_yinvhead_i-ebeln
+          lifnr                 = gw_yinvhead_i-lifnr.
+*        EXCEPTIONS
+*          foreign_lock          = 1
+*          system_failure        = 2
+*          OTHERS                = 3.
+    ENDIF.
+    CLEAR : gt_yinvlink[], gt_yinvhead_ext[], it_doknr[], lw_return, gw_aploc,gw_yinvhead_i,gw_yinvhead_e,lw_digind,
+            lt_cond_type[], lt_field_val[], lw_cond_type, lw_field_val, lt_ded_cond_rec[] .
+  ENDLOOP.
+
+  IF lw_flag = 'X'.     "Code review
+    ROLLBACK WORK.
+  ELSE.
+    COMMIT WORK.
+  ENDIF.
+
+ENDFUNCTION.
